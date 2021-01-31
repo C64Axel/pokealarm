@@ -189,7 +189,6 @@ class GMaps(object):
                 details = response.get('address', [])
                 # Note: for addresses on unnamed roads, EMPTY is preferred for
                 # 'street_num' and 'street' to avoid DTS looking weird
-                print(details)
                 dts['street_num'] = details.get('house_number', details.get('house_name', Unknown.EMPTY))
                 dts['street'] = details.get('road', details.get('street', details.get('city_block', details.get('retail', Unknown.EMPTY))))
                 dts['address'] = u"{} {}".format(dts['street_num'], dts['street'])
