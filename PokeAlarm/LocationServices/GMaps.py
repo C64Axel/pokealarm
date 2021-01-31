@@ -1,3 +1,9 @@
+# inspired by https://github.com/TiMXL73
+# use this only for private Nominatim Server
+# put your Serverstring,Username,Password in your gmaps-key and set gmaps-rev-geocode = yes
+# exampe with authenticatio: gmaps-key: <USER>:<PASSWORD>@https://<SERVER>
+# exampe without authenticatio: gmaps-key: https://<SERVER>
+
 # Standard Library Imports
 import collections
 from datetime import datetime, timedelta
@@ -79,13 +85,20 @@ class GMaps(object):
                 time.sleep(1 - elapsed_time)
 
         # Create the correct url
-        userpassword = self._key.split("@")[0]
-        url = self._key.split("@")[1] + "/" + service
+        if '@' in self._key:
+            userpassword = self._key.split("@")[0]
+            url = self._key.split("@")[1] + "/" + service
+        else:
+            userpassword = False
+            url = self._key.split("@")[0] + "/" + service
         
         # Use the session to send the request
         log.debug('{} request sending.'.format(service))
         self._window.append(time.time())
-        request = self._session.get(url, params=params, auth=(userpassword.split(":")[0], userpassword.split(":")[1]), timeout=3, verify=False)
+        if userpassword:
+            request = self._session.get(url, params=params, auth=(userpassword.split(":")[0], userpassword.split(":")[1]), timeout=3, verify=False)
+        else:
+            request = self._session.get(url, params=params, timeout=3, verify=False)
         if not request.ok:
             log.debug('Response body: {}'.format(
                 json.dumps(request.json(), indent=4, sort_keys=True)))
