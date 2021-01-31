@@ -18,9 +18,6 @@ log = logging.getLogger('Gmaps')
 
 class GMaps(object):
 
-    # Available travel modes for Distance Matrix calls
-    TRAVEL_MODES = frozenset(['walking', 'biking', 'driving', 'transit'])
-
     # Maximum number of requests per second
     _queries_per_second = 50
     # How often to warn about going over query limit
@@ -40,7 +37,6 @@ class GMaps(object):
         # Memoization dicts
         self._geocode_hist = {}
         self._reverse_geocode_hist = {}
-        self._dm_hist = {key: dict() for key in self.TRAVEL_MODES}
 
     # TODO: Move into utilities
     @staticmethod
@@ -83,18 +79,13 @@ class GMaps(object):
                 time.sleep(1 - elapsed_time)
 
         # Create the correct url
-        url = 'https://maps.googleapis.com/maps/api/{}/json'.format(service)
-
-        # Add in the API key
-        if params is None:
-            params = {}
-        params['key'] = self._key
-
+        userpassword = self._key.split("@")[0]
+        url = self._key.split("@")[1] + "/" + service
+        
         # Use the session to send the request
         log.debug('{} request sending.'.format(service))
         self._window.append(time.time())
-        request = self._session.get(url, params=params, timeout=3)
-
+        request = self._session.get(url, params=params, auth=(userpassword.split(":")[0], userpassword.split(":")[1]), timeout=3, verify=False)
         if not request.ok:
             log.debug('Response body: {}'.format(
                 json.dumps(request.json(), indent=4, sort_keys=True)))
@@ -104,13 +95,17 @@ class GMaps(object):
         log.debug('{} request completed successfully with response {}.'
                   ''.format(service, request.status_code))
         body = request.json()
-        if body['status'] == "OK" or body['status'] == "ZERO_RESULTS":
+
+        if type(body) is list:
+            body = body[0]
+            
+        if 'error' not in body:
             return body
-        elif body['status'] == "OVER_QUERY_LIMIT":
-            # self._time_limit = datetime.utcnow() + _warning_window
-            raise UserWarning('API Quota exceeded.')
         else:
-            raise ValueError('Unexpected response status:\n {}'.format(body))
+            if body['error'] == 'Unable to geocode':
+                return {}
+            else:
+                raise ValueError('Unexpected response status:\n {}'.format(body))
 
     @synchronize_with()
     def geocode(self, address, language='en'):
@@ -124,13 +119,9 @@ class GMaps(object):
         latlng = None
         try:
             # Set parameters and make the request
-            params = {'address': address, 'language': language}
-            response = self._make_request('geocode', params)
+            params = {'q': address, 'accept-language': language, format: 'json'}
+            response = self._make_request('search', params)
             # Extract the results and format into a dict
-            response = response.get('results', [])
-            response = response[0] if len(response) > 0 else {}
-            response = response.get('geometry', {})
-            response = response.get('location', {})
             if 'lat' in response and 'lng' in response:
                 latlng = float(response['lat']), float(response['lng'])
 
@@ -170,42 +161,33 @@ class GMaps(object):
     def reverse_geocode(self, latlng, language='en'):
         # type: (tuple) -> dict
         """ Returns the reverse geocode DTS associated with 'lat,lng'. """
-        latlng = '{:.5f},{:.5f}'.format(latlng[0], latlng[1])
+        latlng_hist = '{:.5f},{:.5f}'.format(latlng[0], latlng[1])
         # Check for memoized results
-        if latlng in self._reverse_geocode_hist:
-            return self._reverse_geocode_hist[latlng]
+        if latlng_hist in self._reverse_geocode_hist:
+            return self._reverse_geocode_hist[latlng_hist]
         # Get defaults in case something happens
         dts = self._reverse_geocode_defaults.copy()
         try:
             # Set parameters and make the request
-            params = {'latlng': latlng, 'language': language}
-            response = self._make_request('geocode', params)
+            params = {'lat': latlng[0], 'lon': latlng[1], 'accept-language': language, 'format': 'json'}
+            response = self._make_request('reverse', params)
             # Extract the results and format into a dict
-            response = response.get('results', [])
-            response = response[0] if len(response) > 0 else {}
-            details = {}
-            for item in response.get('address_components'):
-                for category in item['types']:
-                    details[category] = item['short_name']
-
-            # Note: for addresses on unnamed roads, EMPTY is preferred for
-            # 'street_num' and 'street' to avoid DTS looking weird
-            dts['street_num'] = details.get('street_number', Unknown.EMPTY)
-            dts['street'] = details.get('route', Unknown.EMPTY)
-            dts['address'] = "{} {}".format(dts['street_num'], dts['street'])
-            dts['address_eu'] = "{} {}".format(
-                dts['street'], dts['street_num'])  # Europeans are backwards
-            dts['postal'] = details.get('postal_code', Unknown.REGULAR)
-            dts['neighborhood'] = details.get('neighborhood', Unknown.REGULAR)
-            dts['sublocality'] = details.get('sublocality', Unknown.REGULAR)
-            dts['city'] = details.get(
-                'locality', details.get('postal_town', Unknown.REGULAR))
-            dts['county'] = details.get(
-                'administrative_area_level_2', Unknown.REGULAR)
-            dts['state'] = details.get(
-                'administrative_area_level_1', Unknown.REGULAR)
-            dts['country'] = details.get('country', Unknown.REGULAR)
-
+            if 'address' in response:
+                details = response.get('address', [])
+                # Note: for addresses on unnamed roads, EMPTY is preferred for
+                # 'street_num' and 'street' to avoid DTS looking weird
+                print(details)
+                dts['street_num'] = details.get('house_number', details.get('house_name', Unknown.EMPTY))
+                dts['street'] = details.get('road', details.get('street', details.get('city_block', details.get('retail', Unknown.EMPTY))))
+                dts['address'] = u"{} {}".format(dts['street_num'], dts['street'])
+                dts['address_eu'] = u"{} {}".format(dts['street'], dts['street_num'])  # Europeans are backwards
+                dts['postal'] = details.get('postcode', Unknown.REGULAR)
+                dts['country'] = details.get('country', details.get('country_code', Unknown.REGULAR))
+                dts['state'] = details.get('region', details.get('state', Unknown.REGULAR))
+                dts['city'] = details.get('village', details.get('town', details.get('city', details.get('municipality', Unknown.REGULAR))))
+                dts['county'] = details.get('county', details.get('state_district', Unknown.REGULAR))
+                dts['neighborhood'] = details.get('neighbourhood', details.get('allotments', details.get('quarter', Unknown.REGULAR)))
+                dts['sublocality'] = details.get('city_district', details.get('district', details.get('borough', details.get('suburb', details.get('subdivision', Unknown.REGULAR)))))
             # Memoize the results
             self._reverse_geocode_hist[latlng] = dts
         except requests.exceptions.HTTPError as e:
@@ -226,53 +208,11 @@ class GMaps(object):
 
     @synchronize_with()
     def distance_matrix(self, mode, origin, dest, lang, units):
-        # Check for valid mode
-        if mode not in self.TRAVEL_MODES:
-            raise ValueError("DM doesn't support mode '{}'.".format(mode))
-        # Estimate to about ~1 meter of accuracy
-        origin = '{:.5f},{:.5f}'.format(origin[0], origin[1])
-        dest = '{:.5f},{:.5f}'.format(dest[0], dest[1])
 
-        # Check for memoized results
-        key = origin + ':' + dest
-        if key in self._dm_hist:
-            return self._dm_hist[key]
+        dts = {'': Unknown.REGULAR, '': Unknown.REGULAR}
+        
+        # Removed API Calls Since Unsupported by Nominatim
+        log.error("Distance calls unsupported. Returning default of unknown")
 
-        # Set defaults in case something happens
-        dist_key = '{}_distance'.format(mode)
-        dur_key = '{}_duration'.format(mode)
-        dts = {dist_key: Unknown.REGULAR, dur_key: Unknown.REGULAR}
-        try:
-            # Set parameters and make the request
-            params = {
-                'mode': mode, 'origins': origin, 'destinations': dest,
-                'language': lang, 'units': units
-            }
-
-            # Extract the results and format into a dict
-            response = self._make_request('distancematrix', params)
-            response = response.get('rows', [])
-            response = response[0] if len(response) > 0 else {}
-            response = response.get('elements', [])
-            response = response[0] if len(response) > 0 else {}
-
-            # Set the DTS
-            dts[dist_key] = response.get(
-                'distance', {}).get('text', Unknown.REGULAR)
-            dts[dur_key] = response.get(
-                'duration', {}).get('text', Unknown.REGULAR)
-        except requests.exceptions.HTTPError as e:
-            log.error("Distance Matrix failed with "
-                      "HTTPError: {}".format(e.message))
-        except requests.exceptions.Timeout as e:
-            log.error("Distance Matrix failed with "
-                      "connection issues: {}".format(e.message))
-        except UserWarning:
-            log.error("Distance Matrix failed because of exceeded quota.")
-        except Exception as e:
-            log.error("Distance Matrix failed because "
-                      "unexpected error has occurred: "
-                      "{} - {}".format(type(e).__name__, e.message))
-            log.error("Stack trace: \n {}".format(traceback.format_exc()))
         # Send back DTS
         return dts
