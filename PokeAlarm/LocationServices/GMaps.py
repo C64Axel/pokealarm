@@ -96,9 +96,11 @@ class GMaps(object):
         log.debug('{} request sending.'.format(service))
         self._window.append(time.time())
         if userpassword:
-            request = self._session.get(url, params=params, auth=(userpassword.split(":")[0], userpassword.split(":")[1]), timeout=3, verify=False)
+#            request = self._session.get(url, params=params, auth=(userpassword.split(":")[0], userpassword.split(":")[1]), timeout=3, verify=False)
+            request = self._session.get(url, params=params, auth=(userpassword.split(":")[0], userpassword.split(":")[1]), timeout=3)
         else:
-            request = self._session.get(url, params=params, timeout=3, verify=False)
+#            request = self._session.get(url, params=params, timeout=3, verify=False)
+            request = self._session.get(url, params=params, timeout=3)
         if not request.ok:
             log.debug('Response body: {}'.format(
                 json.dumps(request.json(), indent=4, sort_keys=True)))
